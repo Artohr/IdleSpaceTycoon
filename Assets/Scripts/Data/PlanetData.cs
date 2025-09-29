@@ -1,4 +1,12 @@
 using UnityEngine;
+public enum SpecialMechanicType
+{
+    None,
+    SolarBoost,   // Lune
+    Terraforming, // Mars
+    DeepMining,   // Europa
+    MethaneBonus  // Titan
+}
 
 [CreateAssetMenu(menuName = "Idle/PlanetData", fileName = "PlanetData")]
 public class PlanetData : ScriptableObject
@@ -19,4 +27,9 @@ public class PlanetData : ScriptableObject
 
     [Header("Progression")]
     public double rareToUnlockNext = 200.0; // quantité rare requise pour débloquer la planète suivante
+
+    [Header("Mécanique spéciale")]
+    public SpecialMechanicType specialMechanic = SpecialMechanicType.None;
+    public bool hasSpecialBoost = false;
+
 }

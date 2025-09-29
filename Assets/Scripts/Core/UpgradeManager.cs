@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -6,63 +5,78 @@ public class UpgradeManager : MonoBehaviour
 {
     public static UpgradeManager Instance { get; private set; }
 
-    [Serializable]
-    public class UpgradeState
-    {
-        public string id; // ex "Lune_common_minor" (unique)
-        public int level;
-        public double baseMultiplierPerLevel = 2.0; // multiplicateur par niveau (ex: 2 => level1 x2, level2 x4)
-        public double baseCost = 50.0;
-        public double costMultiplier = 1.15;
-    }
-
-    public List<UpgradeState> upgrades = new List<UpgradeState>();
-    private Dictionary<string, UpgradeState> map;
+    // Niveaux d’upgrade sérialisables via un simple Dictionary<string,int>
+    // Clé = "<PlanetName>:common" ou "<PlanetName>:rare"
+    private Dictionary<string, int> levelsById = new Dictionary<string, int>();
 
     void Awake()
     {
         if (Instance == null) { Instance = this; DontDestroyOnLoad(gameObject); }
-        else { Destroy(gameObject); return; }
-
-        map = new Dictionary<string, UpgradeState>();
-        foreach (var u in upgrades) map[u.id] = u;
+        else { Destroy(gameObject); }
     }
 
-    public int GetLevel(string id)
+    // -------- Helpers d'identifiant --------
+    private static string MakeKey(PlanetData planet, bool isRare)
     {
-        if (map.TryGetValue(id, out var s)) return s.level;
-        return 0;
+        if (planet == null) return null;
+        return $"{planet.planetName}:{(isRare ? "rare" : "common")}";
     }
 
-    public void LevelUp(string id)
+    // -------- Get / Set Level --------
+    public int GetLevel(PlanetData planet, bool isRare)
     {
-        if (map.TryGetValue(id, out var s))
+        var key = MakeKey(planet, isRare);
+        if (string.IsNullOrEmpty(key)) return 0;
+
+        if (!levelsById.TryGetValue(key, out var lvl))
         {
-            s.level++;
+            lvl = 0;
+            levelsById[key] = lvl; // initialise à 0
         }
-        else
-        {
-            Debug.LogWarning($"Upgrade id not found: {id}");
-        }
+        return lvl;
     }
 
-    public double GetMultiplier(string id)
+    public void SetLevel(PlanetData planet, bool isRare, int newLevel)
     {
-        if (map.TryGetValue(id, out var s))
-        {
-            // multiplier = baseMultiplierPerLevel ^ level
-            return Math.Pow(s.baseMultiplierPerLevel, s.level);
-        }
-        return 1.0;
+        var key = MakeKey(planet, isRare);
+        if (string.IsNullOrEmpty(key)) return;
+
+        levelsById[key] = Mathf.Max(0, newLevel);
     }
 
-    public double GetUpgradeCost(string id)
+    // -------- Coûts & Achat --------
+    // Formule GDD : cost = baseCost * (costMultiplier ^ level)
+    public double GetUpgradeCost(PlanetData planet, bool isRare)
     {
-        if (map.TryGetValue(id, out var s))
+        int level = GetLevel(planet, isRare);
+        double baseCost = isRare ? planet.rareBaseUpgradeCost : planet.commonBaseUpgradeCost;
+        double mult = isRare ? planet.rareCostMultiplier : planet.commonCostMultiplier;
+        return baseCost * System.Math.Pow(mult, level);
+    }
+
+    // Incrémente juste le niveau (le paiement doit être fait côté bouton)
+    public void ApplyUpgrade(PlanetData planet, bool isRare)
+    {
+        int lvl = GetLevel(planet, isRare);
+        SetLevel(planet, isRare, lvl + 1);
+    }
+
+    // -------- Snapshots pour SaveManager --------
+    public Dictionary<string, int> GetAllLevelsSnapshot()
+    {
+        // Copie défensive
+        return new Dictionary<string, int>(levelsById);
+    }
+
+    public void RestoreLevels(Dictionary<string, int> snapshot)
+    {
+        levelsById.Clear();
+        if (snapshot == null) return;
+
+        foreach (var kv in snapshot)
         {
-            // cost = baseCost * costMultiplier ^ level
-            return s.baseCost * Math.Pow(s.costMultiplier, s.level);
+            // Clamp par sécurité
+            levelsById[kv.Key] = Mathf.Max(0, kv.Value);
         }
-        return double.PositiveInfinity;
     }
 }

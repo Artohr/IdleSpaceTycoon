@@ -1,23 +1,30 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using UnityEngine;
 
 [Serializable]
 public class SaveData
 {
-    public string[] resourceKeys;
-    public string[] resourceValues; // stockées en string pour précision
-    public string[] upgradeIds;
-    public int[] upgradeLevels;
+    // Ressources
+    public List<string> resourceKeys = new();
+    public List<double> resourceValues = new();
+
+    // Upgrades
+    public List<string> upgradeKeys = new();
+    public List<int> upgradeValues = new();
+
+    // Planètes
     public int currentPlanetIndex;
-    public long lastSaveUnix; // seconds since epoch
+    public List<string> unlockedPlanets = new();
+
+    public long lastSaveTimestamp; // UNIX secs
 }
+
 
 public class SaveManager : MonoBehaviour
 {
     public static SaveManager Instance { get; private set; }
-    private string saveFileName = "save.json";
+    private const string SAVE_KEY = "IdleSave";
 
     void Awake()
     {
@@ -25,85 +32,82 @@ public class SaveManager : MonoBehaviour
         else { Destroy(gameObject); }
     }
 
-    public void SaveAll()
+    // Sauvegarde
+    public void SaveGame()
     {
-        var sd = new SaveData();
+        SaveData data = new SaveData();
 
-        // ressources
-        var snapshot = ResourceManager.Instance.GetAllSnapshot();
-        sd.resourceKeys = new string[snapshot.Count];
-        sd.resourceValues = new string[snapshot.Count];
-        int i = 0;
-        foreach (var kv in snapshot)
+        // --- Ressources ---
+        var snap = ResourceManager.Instance.GetAllSnapshot();
+        foreach (var kv in snap) { data.resourceKeys.Add(kv.Key); data.resourceValues.Add(kv.Value); }
+
+
+        // --- Upgrades ---
+        var ups = UpgradeManager.Instance.GetAllLevelsSnapshot(); // Dictionary<string,int>
+        foreach (var kv in ups) { data.upgradeKeys.Add(kv.Key); data.upgradeValues.Add(kv.Value); }
+
+        // --- Planètes ---
+        data.currentPlanetIndex = GameManager.Instance.currentPlanetIndex;
+        foreach (var planet in ResourceManager.Instance.activePlanets)
         {
-            sd.resourceKeys[i] = kv.Key;
-            sd.resourceValues[i] = kv.Value.ToString(CultureInfo.InvariantCulture);
-            i++;
+            data.unlockedPlanets.Add(planet.planetName);
         }
 
-        // upgrades (take from UpgradeManager.upgrades)
-        var ups = UpgradeManager.Instance.upgrades;
-        sd.upgradeIds = new string[ups.Count];
-        sd.upgradeLevels = new int[ups.Count];
-        for (int j = 0; j < ups.Count; j++)
-        {
-            sd.upgradeIds[j] = ups[j].id;
-            sd.upgradeLevels[j] = ups[j].level;
-        }
+        // --- Timestamp ---
+        data.lastSaveTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-        sd.currentPlanetIndex = GameManager.Instance.currentPlanetIndex;
-        sd.lastSaveUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        // Sérialisation JSON
+        string json = JsonUtility.ToJson(data);
+        PlayerPrefs.SetString(SAVE_KEY, json);
+        PlayerPrefs.Save();
 
-        string json = JsonUtility.ToJson(sd);
-        System.IO.File.WriteAllText(System.IO.Path.Combine(Application.persistentDataPath, saveFileName), json);
-        Debug.Log("Saved to " + Application.persistentDataPath);
+        Debug.Log("Sauvegarde effectuée !");
     }
 
-    public void LoadAll()
+    // Chargement
+    public void LoadGame()
     {
-        string path = System.IO.Path.Combine(Application.persistentDataPath, saveFileName);
-        if (!System.IO.File.Exists(path))
+        if (!PlayerPrefs.HasKey(SAVE_KEY))
         {
-            Debug.Log("No save found.");
+            Debug.Log("Pas de sauvegarde existante, nouveau jeu !");
             return;
         }
 
-        string json = System.IO.File.ReadAllText(path);
-        var sd = JsonUtility.FromJson<SaveData>(json);
+        string json = PlayerPrefs.GetString(SAVE_KEY);
+        SaveData data = JsonUtility.FromJson<SaveData>(json);
 
-        // restore resources
-        for (int i = 0; i < sd.resourceKeys.Length; i++)
+        // Ressources
+        for (int i = 0; i < data.resourceKeys.Count; i++)
+            ResourceManager.Instance.Set(data.resourceKeys[i], data.resourceValues[i]);
+
+        // Upgrades
+        var restore = new Dictionary<string, int>();
+        for (int i = 0; i < data.upgradeKeys.Count; i++)
+            restore[data.upgradeKeys[i]] = data.upgradeValues[i];
+        UpgradeManager.Instance.RestoreLevels(restore);
+
+        // --- Planètes débloquées ---
+        GameManager.Instance.currentPlanetIndex = data.currentPlanetIndex;
+        ResourceManager.Instance.activePlanets.Clear();
+        foreach (var planet in GameManager.Instance.planets)
         {
-            string key = sd.resourceKeys[i];
-            string val = sd.resourceValues[i];
-            double d = 0.0;
-            double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out d);
-            ResourceManager.Instance.Set(key, d);
+            if (data.unlockedPlanets.Contains(planet.planetName))
+            {
+                ResourceManager.Instance.activePlanets.Add(planet);
+            }
         }
 
-        // restore upgrades
-        for (int j = 0; j < sd.upgradeIds.Length; j++)
+        // --- Offline Earnings ---
+        double elapsed = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - data.lastSaveTimestamp;
+        if (elapsed > 10) // on calcule seulement si > 10 sec
         {
-            string id = sd.upgradeIds[j];
-            int lvl = sd.upgradeLevels[j];
-            var ups = UpgradeManager.Instance.upgrades;
-            var u = ups.Find(x => x.id == id);
-            if (u != null) u.level = lvl;
-        }
+            PlanetData current = GameManager.Instance.planets[data.currentPlanetIndex];
+            var (commonEarned, rareEarned) = GameManager.Instance.CalculateOfflineEarnings(current, elapsed);
 
-        // restore planet index
-        GameManager.Instance.currentPlanetIndex = sd.currentPlanetIndex;
+            ResourceManager.Instance.Add(current.commonResourceName, commonEarned);
+            ResourceManager.Instance.Add(current.rareResourceName, rareEarned);
 
-        // offline calc
-        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        long elapsed = now - sd.lastSaveUnix;
-        if (elapsed > 0)
-        {
-            var planet = GameManager.Instance.planets[GameManager.Instance.currentPlanetIndex];
-            var (commonEarned, rareEarned) = GameManager.Instance.CalculateOfflineEarnings(planet, elapsed);
-            ResourceManager.Instance.Add(planet.commonResourceName, commonEarned);
-            ResourceManager.Instance.Add(planet.rareResourceName, rareEarned);
-            Debug.Log($"Offline: {commonEarned} {planet.commonResourceName}, {rareEarned} {planet.rareResourceName}");
+            Debug.Log($"Gains offline ajoutés ({elapsed} sec) : +{commonEarned} {current.commonResourceName}, +{rareEarned} {current.rareResourceName}");
         }
     }
 }

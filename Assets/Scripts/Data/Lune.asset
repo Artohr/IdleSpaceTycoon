@@ -10,15 +10,16 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 0164d9c4db5569a4b947c2816680ce5b, type: 3}
-  m_Name: PlanetData
+  m_Name: Lune
   m_EditorClassIdentifier: 
   planetName: Lune
-  commonResourceName: Eau
+  commonResourceName: "Eau gel\xE9e"
   commonProdPerSecond: 1
   commonBaseUpgradeCost: 50
   commonCostMultiplier: 1.15
-  rareResourceName: Fer
+  rareResourceName: "H\xE9lium-3"
   rareProdPerSecond: 0.1
   rareBaseUpgradeCost: 200
   rareCostMultiplier: 1.2
   rareToUnlockNext: 200
+  specialMechanic: 0
